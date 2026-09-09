@@ -2,10 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>SGH Lottery Sys · 三仓河抽奖系统</title>
-    <meta name="description" content="高科技炫酷风格的轮盘抽奖（离线可用，支持设置抽奖选项）" />
+    <meta name="description" content="机甲 HUD 风格抽奖控制台（离线可用，支持设置抽奖选项）" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -20,7 +23,7 @@
         <div class="brand" aria-label="应用名称">
           <span class="brand__dot" aria-hidden="true"></span>
           <span class="brand__name">SGH 三仓河抽奖系统</span>
-          <span class="brand__tag">LOTTERY SYS</span>
+          <span class="brand__tag">RX-CONSOLE</span>
         </div>
       </div>
       <div class="hudTop__right">
@@ -52,14 +55,24 @@
               <div class="center">
                 <div class="center__orb" aria-hidden="true"></div>
                 <div class="center__content" aria-label="中心控制台">
-                  <div class="winner" aria-live="polite">
-                    <div class="winner__title">幸运儿 · 天选之子</div>
-                    <div id="resultText" class="winner__value">等待抽取…</div>
+                  <div class="tactical">
+                    <div class="radar" aria-hidden="true">
+                      <div class="radar__ring"></div>
+                      <div class="radar__ring radar__ring--mid"></div>
+                      <div class="radar__ring radar__ring--core"></div>
+                      <div class="radar__sweep"></div>
+                      <div class="radar__cross"></div>
+                      <div class="radar__lock">LOCKED ON</div>
+                    </div>
+                    <div class="winner" aria-live="polite">
+                      <div class="winner__title">TARGET</div>
+                      <div id="resultText" class="winner__value">等待抽取…</div>
+                    </div>
+                    <button id="btnSpin" class="spin" type="button">
+                      <span class="spin__hot">HOT</span>
+                      <span class="spin__label">启动抽取</span>
+                    </button>
                   </div>
-                  <button id="btnSpin" class="spin" type="button">
-                    <span class="spin__label">启动</span>
-                    <span class="spin__hint">Space / Enter</span>
-                  </button>
                 </div>
               </div>
             </div>
@@ -108,9 +121,10 @@
     </main>
 
     <footer class="hudBottom" aria-label="底部任务条">
+      <div class="hudBottom__hazard" aria-hidden="true"></div>
       <div class="hudBottom__inner">
         <span class="hudBottom__left">SGH LOTTERY SYS</span>
-        <span class="hudBottom__right">OFFLINE READY · CONFIG IN LOCAL STORAGE</span>
+        <span class="hudBottom__right">OFFLINE READY</span>
       </div>
     </footer>
 
@@ -118,10 +132,13 @@
       <form method="dialog" class="dialog__sheet">
         <div class="dialog__hd">
           <div class="dialog__title">抽奖设置</div>
-          <button class="iconbtn" value="cancel" type="submit" title="关闭">
-            <span class="icon" aria-hidden="true">✕</span>
-            <span class="sr-only">关闭</span>
-          </button>
+          <div class="dialog__hdActions">
+            <button id="btnSaveSettings" class="btn btn--save" value="ok" type="submit">保存</button>
+            <button class="iconbtn" value="cancel" type="submit" title="关闭">
+              <span class="icon" aria-hidden="true">✕</span>
+              <span class="sr-only">关闭</span>
+            </button>
+          </div>
         </div>
 
         <div class="dialog__bd">
@@ -145,13 +162,12 @@
               </div>
               <div id="items" class="table__bd" aria-label="抽奖选项列表"></div>
             </div>
-            <div class="editor__footer">
-              <div id="itemsHint" class="hint">至少 2 个选项才能抽奖。</div>
-              <div class="dialog__actions">
-                <button id="btnSaveSettings" class="btn" value="ok" type="submit">保存并关闭</button>
-              </div>
-            </div>
           </div>
+        </div>
+
+        <div class="dialog__ft">
+          <div id="itemsHint" class="hint">至少 2 个选项才能抽奖。</div>
+          <button class="btn btn--save" value="ok" type="submit">保存并关闭</button>
         </div>
       </form>
     </dialog>

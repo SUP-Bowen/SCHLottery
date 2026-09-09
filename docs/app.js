@@ -1,4 +1,5 @@
-const STORAGE_KEY = "sgh_lottery_config_v4";
+const STORAGE_KEY = "sgh_lottery_config_v5";
+const STORAGE_KEY_LEGACY = "sgh_lottery_config_v4";
 const STORAGE_STATS = "sgh_lottery_stats_v1";
 const MAX_PRIZES = 32;
 
@@ -41,7 +42,7 @@ const btnDoImport = $("#btnDoImport");
 const btnResetStats = $("#btnResetStats");
 
 const DEFAULT_CONFIG = {
-  sound: false,
+  sound: true,
   confetti: true,
   removeWinner: false,
   items: [
@@ -116,17 +117,30 @@ function weightedPickIndex(items) {
 }
 
 function loadConfig() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  let raw = localStorage.getItem(STORAGE_KEY);
+  let migrated = false;
+  if (!raw) {
+    const legacy = localStorage.getItem(STORAGE_KEY_LEGACY);
+    if (legacy) {
+      raw = legacy;
+      migrated = true;
+    }
+  }
   if (!raw) return structuredClone(DEFAULT_CONFIG);
   const parsed = safeJsonParse(raw);
   if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return structuredClone(DEFAULT_CONFIG);
   const v = parsed.value;
-  return {
-    sound: Boolean(v.sound),
+  const next = {
+    // v5 migration: default sound ON for existing installs
+    sound: migrated ? true : "sound" in v ? Boolean(v.sound) : true,
     confetti: v.confetti !== false,
     removeWinner: Boolean(v.removeWinner),
     items: normalizeItems(Array.isArray(v.items) ? v.items : DEFAULT_CONFIG.items).slice(0, MAX_PRIZES),
   };
+  if (migrated) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+  return next;
 }
 
 function saveConfig() {
@@ -165,6 +179,14 @@ function ensureAudio() {
   return audioCtx;
 }
 
+function unlockAudio() {
+  const ctx = ensureAudio();
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+}
+
+document.addEventListener("pointerdown", unlockAudio, { once: true });
+document.addEventListener("keydown", unlockAudio, { once: true });
+
 function beep({ freq = 420, time = 0.045, type = "square", gain = 0.02 } = {}) {
   if (!config.sound) return;
   const ctx = ensureAudio();
@@ -182,12 +204,40 @@ function beep({ freq = 420, time = 0.045, type = "square", gain = 0.02 } = {}) {
   o.stop(t0 + time + 0.01);
 }
 
+/** Mecha lock-on / hit confirm sequence (中奖锁定音) */
 function winChime() {
   if (!config.sound) return;
-  const base = 392;
-  [0, 4, 7, 12].forEach((step, i) =>
-    setTimeout(() => beep({ freq: base * 2 ** (step / 12), time: 0.11, type: "triangle", gain: 0.05 }), i * 92),
-  );
+  const ctx = ensureAudio();
+  const t0 = ctx.currentTime;
+
+  const tone = (freq, start, dur, type = "sawtooth", gain = 0.045) => {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    const f = ctx.createBiquadFilter();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0 + start);
+    f.type = "lowpass";
+    f.frequency.setValueAtTime(2400, t0 + start);
+    g.gain.setValueAtTime(0.0001, t0 + start);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + start + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+    o.connect(f);
+    f.connect(g);
+    g.connect(ctx.destination);
+    o.start(t0 + start);
+    o.stop(t0 + start + dur + 0.02);
+  };
+
+  // Target acquired blips
+  tone(880, 0.0, 0.07, "square", 0.03);
+  tone(1175, 0.08, 0.07, "square", 0.035);
+  // Armor impact
+  tone(110, 0.16, 0.22, "triangle", 0.07);
+  tone(55, 0.18, 0.28, "sine", 0.05);
+  // Lock confirm chord
+  tone(523.25, 0.34, 0.18, "triangle", 0.05);
+  tone(659.25, 0.4, 0.2, "triangle", 0.045);
+  tone(783.99, 0.46, 0.28, "sawtooth", 0.035);
 }
 
 // --- Aligned perimeter grid marquee
@@ -208,18 +258,40 @@ function chooseGridFor(count) {
   const rect = trackEl.getBoundingClientRect();
   const w = Math.max(1, rect.width);
   const h = Math.max(1, rect.height);
-  const presets = [
-    { cols: 4, rows: 4 }, // 12
-    { cols: 5, rows: 4 }, // 14
-    { cols: 6, rows: 5 }, // 18
-    { cols: 7, rows: 5 }, // 20
-    { cols: 7, rows: 6 }, // 22
-    { cols: 8, rows: 6 }, // 24
-    { cols: 9, rows: 6 }, // 26
-    { cols: 9, rows: 7 }, // 28
-    { cols: 10, rows: 7 }, // 30
-    { cols: 10, rows: 8 }, // 32
-  ].map((g) => ({ ...g, slots: perimeter(g.cols, g.rows) }));
+  const narrow = w < 480;
+  // On phones prefer fewer columns / taller grids so perimeter cells stay readable.
+  const presets = (
+    narrow
+      ? [
+          // Keep cols >= 4 so .center (2 / -2) stays wide enough for the spin CTA.
+          { cols: 4, rows: 4 }, // 12
+          { cols: 4, rows: 5 }, // 14
+          { cols: 5, rows: 5 }, // 16
+          { cols: 5, rows: 6 }, // 18
+          { cols: 6, rows: 5 }, // 18
+          { cols: 6, rows: 6 }, // 20
+          { cols: 6, rows: 7 }, // 22
+          { cols: 7, rows: 6 }, // 22
+          { cols: 7, rows: 7 }, // 24
+          { cols: 7, rows: 8 }, // 26
+          { cols: 8, rows: 7 }, // 26
+          { cols: 8, rows: 8 }, // 28
+          { cols: 8, rows: 9 }, // 30
+          { cols: 8, rows: 10 }, // 32
+        ]
+      : [
+          { cols: 4, rows: 4 }, // 12
+          { cols: 5, rows: 4 }, // 14
+          { cols: 6, rows: 5 }, // 18
+          { cols: 7, rows: 5 }, // 20
+          { cols: 7, rows: 6 }, // 22
+          { cols: 8, rows: 6 }, // 24
+          { cols: 9, rows: 6 }, // 26
+          { cols: 9, rows: 7 }, // 28
+          { cols: 10, rows: 7 }, // 30
+          { cols: 10, rows: 8 }, // 32
+        ]
+  ).map((g) => ({ ...g, slots: perimeter(g.cols, g.rows) }));
 
   const need = clamp(count, 2, MAX_PRIZES);
   const candidates = presets.filter((p) => p.slots >= need);
@@ -228,18 +300,64 @@ function chooseGridFor(count) {
   // Prefer larger cell size on small screens (avoid tiny unreadable slots).
   let best = candidates[0];
   let bestScore = -Infinity;
+  const pad = narrow ? 16 : 28;
   for (const p of candidates) {
-    const cellW = (w - 28) / p.cols;
-    const cellH = (h - 28) / p.rows;
+    const cellW = (w - pad) / p.cols;
+    const cellH = (h - pad) / p.rows;
     const minCell = Math.min(cellW, cellH);
     const slack = p.slots - need;
-    const score = minCell * 10 - slack * 2; // prioritize readability, then fewer ghost slots
+    // Prefer near-square cells; on phones also reward a bit of ring spacing for sparse prizes.
+    const aspectPenalty = Math.abs(cellW - cellH) * (narrow ? 0.35 : 0.15);
+    const score = minCell * (narrow ? 14 : 10) - slack * (narrow ? 1.2 : 2) - aspectPenalty;
     if (score > bestScore) {
       bestScore = score;
       best = p;
     }
   }
   return best;
+}
+
+/** Spread prizes evenly around the ring so sparse configs don't clump on the top-left. */
+function prizeSlotIndex(prizeIndex, prizeCount, slotCount) {
+  if (prizeCount <= 0 || slotCount <= 0) return -1;
+  if (prizeCount >= slotCount) return prizeIndex;
+  return Math.floor((prizeIndex * slotCount) / prizeCount);
+}
+
+const CARD_CATS = ["WEAPON", "ARMOR", "SUPPLY", "SYSTEM", "SENSOR", "THRUSTER"];
+const CARD_ICONS = [
+  "M12 2l8 3.5v6.2c0 4.8-3.2 9.2-8 10.8-4.8-1.6-8-6-8-10.8V5.5L12 2z",
+  "M13 2L6 13h5l-1 9 8-13h-5l0-7z",
+  "M12 2l9 8-9 12L3 10l9-8z",
+  "M12 5a7 7 0 100 14 7 7 0 000-14zm0 3a4 4 0 110 8 4 4 0 010-8zm0 2.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z",
+  "M8 3h8v3h3v12h-3v3H8v-3H5V6h3V3zm3 5v8h2V8h-2z",
+  "M12 3l2.2 4.6 5.1.7-3.7 3.6.9 5.1L12 14.8 7.5 17l.9-5.1L4.7 8.3l5.1-.7L12 3z",
+];
+
+function cardMeta(item, index) {
+  const w = Number(item.weight) || 1;
+  let tone = "ssr";
+  let code = "SSR";
+  if (w <= 1 && index === 0) {
+    tone = "ur";
+    code = "UR";
+  } else if (w <= 1) {
+    tone = "ssr";
+    code = "SSR";
+  } else if (w <= 2) {
+    tone = "sr";
+    code = "SR";
+  } else {
+    tone = "r";
+    code = "R";
+  }
+  return {
+    tone,
+    code,
+    cat: CARD_CATS[index % CARD_CATS.length],
+    icon: CARD_ICONS[index % CARD_ICONS.length],
+    en: `UNIT-${String(index + 1).padStart(2, "0")}`,
+  };
 }
 
 function renderTrack() {
@@ -256,6 +374,11 @@ function renderTrack() {
   slotEls = [];
   slotCount = coords.length;
 
+  const prizeAtSlot = new Map();
+  for (let i = 0; i < prizeCount; i++) {
+    prizeAtSlot.set(prizeSlotIndex(i, prizeCount, slotCount), i);
+  }
+
   for (let i = 0; i < slotCount; i++) {
     const slot = document.createElement("div");
     slot.className = "slot";
@@ -263,13 +386,27 @@ function renderTrack() {
     slot.style.gridRow = String(coords[i].y);
     slot.setAttribute("role", "listitem");
     slot.dataset.slot = String(i);
-    if (i < prizeCount) {
-      slot.dataset.idx = String(i);
-      slot.title = items[i].label;
-      const label = document.createElement("div");
-      label.className = "slot__label";
-      label.textContent = items[i].label;
-      slot.append(label);
+    const prizeIdx = prizeAtSlot.get(i);
+    if (prizeIdx != null) {
+      const item = items[prizeIdx];
+      const meta = cardMeta(item, prizeIdx);
+      slot.dataset.idx = String(prizeIdx);
+      slot.dataset.tone = meta.tone;
+      slot.title = item.label;
+      slot.classList.add(`slot--${meta.tone}`);
+      slot.innerHTML = `
+        <span class="slot__corners" aria-hidden="true"></span>
+        <div class="slot__top">
+          <span class="slot__badge">${meta.code}</span>
+          <span class="slot__cat">${meta.cat}</span>
+        </div>
+        <div class="slot__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="${meta.icon}"></path>
+          </svg>
+        </div>
+        <div class="slot__label">${item.label}</div>
+      `;
     } else {
       slot.classList.add("slot--ghost");
       slot.setAttribute("aria-hidden", "true");
@@ -325,7 +462,7 @@ function burstConfetti() {
   const dpr = resizeFullCanvas(confettiCanvas);
   const w = confettiCanvas.width;
   const h = confettiCanvas.height;
-  const colors = ["#FFCC00", "#2B6FFF", "#FF2B2B", "#31D6FF", "#F6F8FF"];
+  const colors = ["#53b1ff", "#ffce21", "#d53b00", "#0070d1", "#ffffff"];
   confetti = new Array(160).fill(0).map(() => {
     const a = cryptoRandom() * Math.PI * 2;
     const s = (2.4 + cryptoRandom() * 6.4) * dpr;
@@ -489,11 +626,17 @@ function readEditorItems() {
   return normalizeItems(items);
 }
 
+function setSaveEnabled(enabled) {
+  for (const btn of document.querySelectorAll("#settingsDialog .btn--save, #btnSaveSettings")) {
+    btn.disabled = !enabled;
+  }
+}
+
 function validateEditor() {
   const items = readEditorItems();
   const ok = items.length >= 2;
   const over = items.length > MAX_PRIZES;
-  btnSaveSettings.disabled = !ok || over;
+  setSaveEnabled(ok && !over);
   btnAddItem.disabled = items.length >= MAX_PRIZES;
   itemsHint.className = ok && !over ? "hint" : "hint hint--bad";
   if (!ok) itemsHint.textContent = "至少 2 个奖项才能抽奖。";
@@ -532,7 +675,7 @@ function formatExport() {
       confetti: Boolean(config.confetti),
       removeWinner: Boolean(config.removeWinner),
       exportedAt: new Date().toISOString(),
-      version: 4,
+      version: 5,
     },
     null,
     2,
@@ -675,6 +818,13 @@ btnAddItem.addEventListener("click", () => addRow({ label: "", weight: 1 }));
 btnSaveSettings.addEventListener("click", () => {
   if (btnSaveSettings.disabled) return;
   applySettingsFromEditor();
+});
+
+settingsDialog.addEventListener("click", (e) => {
+  const btn = e.target.closest(".btn--save");
+  if (!btn || btn.disabled) return;
+  // Footer save shares the same handler as header save.
+  if (btn !== btnSaveSettings) applySettingsFromEditor();
 });
 
 settingsDialog.addEventListener("close", () => {
